@@ -1,0 +1,73 @@
+include:
+  - templates/.gitlab-loadtesting-ci.yml
+
+.yc-lt-config:
+  lt_variables: &lt_variables
+    lt_folder_id:  # <-- folder id
+    
+    lt_agent_service_account_id: # <-- service account id
+    lt_agent_zone: # <-- compute vm availability zone
+    lt_agent_subnet_id: # <-- compute vm sub network 
+    lt_agent_security_group_id: # <-- security group id
+
+stages:
+  - loadtesting
+  - loadtesting-cleanup
+
+load-test-prepare-infra:
+  extends: .yc-template-lt-job-setup-compute-agent
+  stage: loadtesting
+  variables:
+    <<: *lt_variables
+
+load-test-destroy-infra:
+  extends: .yc-template-lt-job-delete-compute-agent
+  stage: loadtesting-cleanup
+  variables:
+    <<: *lt_variables
+
+load-test-job-const:
+  extends: .yc-template-lt-job-run-test
+  stage: loadtesting
+  needs: [load-test-prepare-infra]
+  variables:
+    <<: *lt_variables
+    lt_test_config_path: ${CI_PROJECT_DIR}/test-config-const.yaml # <-- a path to your loadtesting config here
+    lt_test_name: ${CI_PROJECT_NAME}-pr-check-const
+
+check-load-test-job-const:
+  extends: .yc-template-lt-job-check-test
+  stage: loadtesting
+  needs: [load-test-job-const]
+  dependencies: [load-test-job-const]
+  script:
+    - function check_info { jq -r "$1" < ./lt_test_info.json; }
+    - function check_report { jq -r "$1" < ./lt_test_report.json; }
+
+    - set -ex
+    - '[[ true == $(check_info ".summary.status == \"DONE\"") ]]'
+    - '[[ true == $(check_report ".overall.quantiles.q50 < 50") ]]'
+    - '[[ true == $(check_report ".overall.quantiles.q90 < 100") ]]'
+
+load-test-job-imbalance:
+  extends: .yc-template-lt-job-run-test
+  stage: loadtesting
+  needs: [load-test-prepare-infra]
+  variables:
+    <<: *lt_variables
+    lt_test_config_path: ${CI_PROJECT_DIR}/test-config-imbalance.yaml # <-- a path to your loadtesting config here
+    lt_test_name: ${CI_PROJECT_NAME}-pr-check-imbalance
+
+check-load-test-job-imbalance:
+  extends: .yc-template-lt-job-check-test
+  stage: loadtesting
+  needs: [load-test-job-imbalance]
+  dependencies: [load-test-job-imbalance]
+  script:
+    - function check_info { jq -r "$1" < ./lt_test_info.json; }
+    - function check_report { jq -r "$1" < ./lt_test_report.json; }
+
+    - set -ex
+    - '[[ true == $(check_info ".summary.status == \"DONE\"") ]]'
+    - '[[ true == $(check_report ".overall.quantiles.q50 < 50") ]]'
+    - '[[ true == $(check_report ".overall.quantiles.q90 < 100") ]]'
