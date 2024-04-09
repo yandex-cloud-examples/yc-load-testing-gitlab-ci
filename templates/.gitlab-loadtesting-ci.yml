@@ -1,0 +1,162 @@
+.yc-template-lt-default-vars: &yc-template-lt-default-vars
+  ####################################################################################################
+  # common-variables
+  #
+
+  # Folder ID used for load testing
+  # Tests and agents will be created here
+  # See details here: https://yandex.cloud/en/docs/load-testing/quickstart#before-you-begin
+  lt_folder_id: |-
+    !! UNSET lt_folder_id
+
+  # Authorized key json string
+  # See details here: https://yandex.cloud/en/docs/iam/concepts/authorization/key
+  lt_authorized_key_json: ${YC_LOADTESTING_CI_AUTHORIZED_KEY_JSON}
+
+  ####################################################################################################
+  # agent related variables
+  #
+
+  # Name of load testing agent
+  lt_agent_name: 'onetime-gitlab-ci-agent-${CI_PIPELINE_IID}'
+
+  # Description of load testing agent
+  lt_agent_description: 'GitLab CI url: ${CI_PIPELINE_URL}'
+
+  # Labels of load testing agent
+  # A single string in format 'key=value[,key2=value2[,...]]'
+  lt_agent_labels: 'pipeline=${CI_PIPELINE_IID},source=gitlab-ci'
+
+  # Zone in which a load testing ageent will be created
+  # See details here: https://yandex.cloud/en/docs/overview/concepts/geo-scope
+  lt_agent_zone: 'ru-central1-b'
+
+  # Number of CPU cores with which a load testing agent is created
+  # See details here: https://yandex.cloud/en/docs/load-testing/concepts/agent
+  lt_agent_compute_cpu: '2'
+
+  # Amount of RAM memory with which a load testing agent is created
+  # See details here: https://yandex.cloud/en/docs/load-testing/concepts/agent
+  lt_agent_compute_ram: '2G'
+
+  # Service Account ID of load testing agent
+  # See details here: https://yandex.cloud/en/docs/load-testing/operations/create-agent#infrastructure-prepare
+  lt_agent_service_account_id: |-
+    !! UNSET lt_agent_service_account_id
+
+  # Subnet ID of load testing agent
+  lt_agent_subnet_id: |-
+    !! USET lt_agent_subnet_id
+  
+  # Security Group ID of load testing agent
+  lt_agent_security_group_id: |-
+    !! USET lt_agent_security_group_id
+
+  ####################################################################################################
+  # Test related variables
+  #
+  
+  # Name of a load test being created
+  lt_test_name: 'test-from-gitlab-ci'
+
+  # Description of a load testing being created
+  lt_test_description: 'GitLab CI url: ${CI_JOB_URL}'
+
+  # Labels of a load test beging created
+  # A single string in format 'key=value[,key2=value2[,...]]'
+  lt_test_labels: 'pipeline=${CI_PIPELINE_IID},job=${CI_JOB_ID},source=gitlab-ci'
+
+  # Local path to load test configuration file 
+  # See 'Tutorials' section in the service documentation: https://yandex.cloud/en/docs/load-testing/
+  lt_test_config_path: |-
+    !! UNSET lt_test_config_path
+
+######################################################################################################
+######################################################################################################
+######################################################################################################
+
+.shared:
+  yc-template-lt-install_curl: &yc-template-lt-install_curl |-
+    DEBIAN_FRONTEND=noninteractive apt install -y curl
+
+  yc-template-lt-install_jq: &yc-template-lt-install_jq |-
+    DEBIAN_FRONTEND=noninteractive apt install -y jq
+
+  yc-template-lt-install_yc: &yc-template-lt-install_yc |-
+    curl -f -s -LO https://storage.yandexcloud.net/yandexcloud-yc/install.sh
+    bash install.sh -i /usr/local/yandex-cloud -n
+    ln -sf /usr/local/yandex-cloud/bin/yc /usr/local/bin/yc
+    echo "${lt_authorized_key_json}" > key.json
+    yc config profile create sa-profile
+    yc config set service-account-key key.json
+    yc config set format json
+    yc config set folder-id ${lt_folder_id}
+
+.yc-template-lt-job-setup-compute-agent: &yc-template-lt-job-setup-compute-agent
+  interruptible: false
+  variables: *yc-template-lt-default-vars
+  before_script:
+    - apt update
+    - *yc-template-lt-install_curl
+    - *yc-template-lt-install_jq
+    - *yc-template-lt-install_yc
+  script:
+    - set -ex
+    - yc loadtesting agent create
+        --service-account-id "${lt_agent_service_account_id}"
+        --name "${lt_agent_name}"
+        --description "${lt_agent_description}"
+        --labels "${lt_agent_label}"
+        --zone "${lt_agent_zone}"
+        --network-interface subnet-id="${lt_agent_subnet_id}",security-group-ids="${lt_agent_security_group_id}"
+        --cores "${lt_agent_compute_cpu}"
+        --memory "${lt_agent_compute_ram}"
+
+.yc-template-lt-job-delete-compute-agent: &yc-template-lt-job-delete-compute-agent
+  rules: [{ when: always }]
+  interruptible: false
+  variables: *yc-template-lt-default-vars
+  before_script:
+    - apt update
+    - *yc-template-lt-install_curl
+    - *yc-template-lt-install_jq
+    - *yc-template-lt-install_yc
+  script:
+    - agent_ids=$(yc loadtesting agent list --filter="name=${lt_agent_name}" | jq -r "[.[].id] | join(\" \")")
+    - echo $agent_ids | xargs yc loadtesting agent delete
+
+.yc-template-lt-job-run-test: &yc-template-lt-job-run-test
+  resource_group: loadtesting
+  interruptible: true
+  variables: *yc-template-lt-default-vars
+  before_script:
+    - apt update
+    - *yc-template-lt-install_curl
+    - *yc-template-lt-install_jq
+    - *yc-template-lt-install_yc
+  script:
+    - lt_config_id=$(yc loadtesting test-config create --from-yaml-file "${lt_test_config_path}" | jq -r .id)
+    - lt_test_id=$(yc loadtesting test create
+        --name "${lt_test_name}"
+        --description "${lt_test_description}"
+        --labels "${lt_test_labels}"
+        --configuration id="${lt_config_id}",agent-by-filter="name=${lt_agent_name}"
+        --wait
+      | jq -r .id)
+      
+    - yc loadtesting test get-report-table "${lt_test_id}" > lt_test_report.json
+    - yc loadtesting test get "${lt_test_id}" > lt_test_info.json
+  artifacts:
+    name: "load_test_report-${lt_test_name}.json"
+    paths: 
+      - ./lt_test_report.json
+      - ./lt_test_info.json
+
+.yc-template-lt-job-check-test: &yc-template-lt-job-check-test
+  variables: *yc-template-lt-default-vars
+  before_script:
+    - apt update
+    - *yc-template-lt-install_jq
+  script:
+    - echo 'No assessment script defined'
+    - exit 1
