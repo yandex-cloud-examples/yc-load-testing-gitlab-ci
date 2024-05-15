@@ -1,0 +1,54 @@
+core:
+  debug: true
+
+autostop:
+  enabled: true
+  package: yandextank.plugins.Autostop
+  autostop:
+    # force stop if:
+
+    # 3 min passed
+    - limit(3m)
+    # for 10s, 20% of requests failed due to generator overload
+    - total_net(777, 20%, 10s)
+    # for 10s, 50% of net requests failed
+    - total_http(0, 50%, 10s)
+    # for 10s, each second, 95% of http requests failed
+    - negative_http(2xx, 95%, 10s)
+
+pandora:
+  enabled: true
+  package: yandextank.plugins.Pandora
+  config_content:
+    pools:
+      - id: HTTP
+        discard_overflow: true
+        gun:
+          type: http
+          target: '${YC_LT_TARGET}:80'
+          ssl: false
+        ammo:
+          type: uri
+          file: _requests-premium.uri
+        startup:
+          type: once
+          times: 1000
+        rps:
+          - duration: 2m
+            type: const
+            ops: 100
+
+telegraf:
+  enabled: true
+  package: yandextank.plugins.Telegraf
+  config:
+    hosts:
+      localhost:
+    metrics:
+      cpu:
+      mem:
+      diskio:
+      net:
+      netstat:
+      system:
+      kernel:
