@@ -27,13 +27,13 @@
   YC_LT_AUTOMATION_SCRIPTS_DIR: "./automation"
   YC_LT_AUTOMATION_SCRIPTS_URL: https://raw.githubusercontent.com/yandex-cloud-examples/yc-load-testing-gitlab-ci/main/automation
 
+  YC_LT_VERBOSE: '1'
   YC_LT_CLI_INTERACTIVE: '0'
   YC_LT_AUTOMATION_SCRIPTS: |-
     _agent_create.sh
     _agent_delete.sh
     _functions.sh
-    _source_create_test_args.sh
-    _source_read_meta.sh
+    _compose_test_create_args.sh
     _test_check.sh
     _test_run.sh
     _variables.sh
@@ -104,7 +104,7 @@
     - *yc-template-lt-prepare-automation-scripts
   script:
     - set -e
-    - $YC_LT_AUTOMATION_SCRIPTS_DIR/agent.sh create
+    - $YC_LT_AUTOMATION_SCRIPTS_DIR/agent.sh create --count $YC_LT_AGENTS_CNT --labels $YC_LT_AGENT_LABELS
 
 .yc-template-lt-job-delete-compute-agent:
   &yc-template-lt-job-delete-compute-agent
@@ -117,7 +117,7 @@
     - *yc-template-lt-prepare-automation-scripts
   script:
     - set -e
-    - $YC_LT_AUTOMATION_SCRIPTS_DIR/agent.sh delete
+    - $YC_LT_AUTOMATION_SCRIPTS_DIR/agent.sh delete --labels $YC_LT_AGENT_LABELS
 
 .yc-template-lt-job-run-test: &yc-template-lt-job-run-test
   resource_group: loadtesting
@@ -130,7 +130,7 @@
   script:
     - set -e
     - IFS=$'\n ' read -d '' -ra _tests <<< "${YC_LT_TESTS}" || true
-    - VERBOSE=1 $YC_LT_AUTOMATION_SCRIPTS_DIR/test.sh "${_tests[@]}"
+    - $YC_LT_AUTOMATION_SCRIPTS_DIR/test.sh "${_tests[@]}"
   artifacts:
     when: always
     name: "tests_output"

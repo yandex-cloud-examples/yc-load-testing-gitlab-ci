@@ -17,24 +17,27 @@ source "$_SCRIPT_DIR/_variables.sh"
 
 _CMD=''
 
-_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
     create)
         _CMD='create'
         shift
+        break
         ;;
     delete)
         _CMD='delete'
         shift
-        ;;
-    --)
-        _ARGS+=("$@")
         break
         ;;
-    *)
-        _ARGS+=("$1")
-        shift
+    -h | --help | *)
+        echo "Usage: $(basename "$0") subcommand [ARG]..."
+        echo ""
+        echo "Subcommands:"
+        echo " $(basename "$0") create [--count N] [ARG]..."
+        echo "   create specified number of agents"
+        echo " $(basename "$0") delete [ARG]..."
+        echo "   delete agents"
+        exit 0
         ;;
     esac
 done
@@ -45,11 +48,39 @@ if [[ -z "${VAR_FOLDER_ID:-$(yc_ config get folder-id)}" ]]; then
 fi
 
 if [[ "$_CMD" == 'create' ]]; then
-    _log "Compute Agents create request. Number of agents: $VAR_AGENTS_CNT"
+    _CNT=$VAR_AGENTS_CNT
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        -h | --help)
+            echo "Usage: $(basename "$0") create [--count N] [ARG]..."
+            echo ""
+            echo "Call agent creation subroutine N times and wait until all agents are READY_FOR_TEST"
+            echo ""
+            echo "Subroutine help:"
+            run_script "$_SCRIPT_DIR/_agent_create.sh" --help
+            exit 0
+            ;;
+        --count)
+            _CNT="$2"
+            shift
+            shift
+            break
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
 
+    _log "Compute Agents create request. Number of agents: $_CNT"
     _pids=()
-    for _ in $(seq 1 "$VAR_AGENTS_CNT"); do
-        run_script "$_SCRIPT_DIR/_agent_create.sh" "${_ARGS[@]}" &
+    for _i in $(seq 1 "$_CNT"); do
+        _log_stage "[$_i]"
+        run_script "$_SCRIPT_DIR/_agent_create.sh" "$@" &
         _pids+=("$!")
     done
 
@@ -62,8 +93,28 @@ if [[ "$_CMD" == 'create' ]]; then
     exit ${_rc}
 
 elif [[ "$_CMD" == 'delete' ]]; then
-    _log "Compute Agents delete request. Number of agents: $VAR_AGENTS_CNT"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        -h | --help)
+            echo "Usage: $(basename "$0") delete [ARG]..."
+            echo ""
+            echo "Call agent deletion subroutine"
+            echo ""
+            echo "Subroutine help:"
+            run_script "$_SCRIPT_DIR/_agent_delete.sh" --help
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
 
-    run_script "$_SCRIPT_DIR/_agent_delete.sh" "${_ARGS[@]}"
+    _log "Compute Agents delete request."
+    run_script "$_SCRIPT_DIR/_agent_delete.sh" "$@"
     exit $?
 fi

@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 
-if ! run_script -- "$_DEFAULT_CHECK"; then
-    exit 1
-fi
-
 rc=0
 
-check_json_val \
-    'test status is DONE' \
-    '.summary.status' \
-    '== "DONE"'
+_DEFAULT_CHECK_DIR=${YC_LT_AUTOMATION_SCRIPTS_DIR:-automation}
+if [[ -f "$_DEFAULT_CHECK_DIR/default_check_summary.sh" ]]; then
+    /usr/bin/env bash "$_DEFAULT_CHECK_DIR/default_check_summary.sh" "$1"
+    rc=$?
+fi
 
-rc=$((rc | $?))
+echo '- test status is DONE'
+if ! jq -re '"DONE" == (.summary.status)' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
-check_json_val \
-    'no error reported' \
-    '.summary.error // ""' \
-    '== ""'
-
-rc=$((rc | $?))
+echo '- no error reported'
+if ! jq -re '"" == (.summary.error // "")' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
 exit $rc

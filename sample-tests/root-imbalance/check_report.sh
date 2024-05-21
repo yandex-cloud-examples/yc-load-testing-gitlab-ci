@@ -1,37 +1,35 @@
 #!/usr/bin/env bash
 
-if ! run_script -- "$_DEFAULT_CHECK"; then
-    exit 1
-fi
-
 rc=0
 
-check_json_val \
-    'response time 99th percentile less than 10s' \
-    '.overall.quantiles.q99 | tonumber' \
-    '< 10000'
+_DEFAULT_CHECK_DIR=${YC_LT_AUTOMATION_SCRIPTS_DIR:-automation}
+if [[ -f "$_DEFAULT_CHECK_DIR/default_check_report.sh" ]]; then
+    /usr/bin/env bash "$_DEFAULT_CHECK_DIR/default_check_report.sh" "$1"
+    rc=$?
+fi
 
-rc=$((rc | $?))
+echo '- response time 99th percentile less than 10s'
+if ! jq -re '10000 > (.overall.quantiles.q99 | tonumber)' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
-check_json_val \
-    'at least 1000 successful responses' \
-    '.overall.http_codes."200" // 0 | tonumber' \
-    '>= 1000'
+echo '- at least 1000 successful responses'
+if ! jq -re '1000 <= (.overall.http_codes."200" // 0 | tonumber)' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
-rc=$((rc | $?))
+echo '- at least 75% of net responses are 0'
+if ! jq -re '0.75 < ((.overall.net_codes."0" // 0 | tonumber) / ([.overall.net_codes[] | tonumber] | add))' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
-check_json_val \
-    'at least 75% of net responses are 0' \
-    '(.overall.net_codes."0" // 0 | tonumber) / ([.overall.net_codes[] | tonumber] | add)' \
-    '> 0.75'
-
-rc=$((rc | $?))
-
-check_json_val \
-    'at least 75% of http responses are 200' \
-    '(.overall.http_codes."200" // 0 | tonumber) / ([.overall.http_codes[] | tonumber] | add)' \
-    '> 0.75'
-
-rc=$((rc | $?))
+echo '- at least 75% of http responses are 200'
+if ! jq -re '0.75 < ((.overall.http_codes."200" // 0 | tonumber) / ([.overall.http_codes[] | tonumber] | add))' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
 exit $rc

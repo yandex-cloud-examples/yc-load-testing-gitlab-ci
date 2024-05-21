@@ -1,37 +1,35 @@
 #!/usr/bin/env bash
 
-if ! run_script -- "$_DEFAULT_CHECK"; then
-    exit 1
-fi
-
 rc=0
 
-check_json_val \
-    'test status is AUTOSTOPPED' \
-    '.summary.status' \
-    '== "AUTOSTOPPED"'
+_DEFAULT_CHECK_DIR=${YC_LT_AUTOMATION_SCRIPTS_DIR:-automation}
+if [[ -f "$_DEFAULT_CHECK_DIR/default_check_summary.sh" ]]; then
+    /usr/bin/env bash "$_DEFAULT_CHECK_DIR/default_check_summary.sh" "$1"
+    rc=$?
+fi
 
-rc=$((rc | $?))
+echo '- test status is AUTOSTOPPED'
+if ! jq -re '"AUTOSTOPPED" == (.summary.status)' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
-check_json_val \
-    'no error reported' \
-    '.summary.error // ""' \
-    '== ""'
+echo '- no error reported'
+if ! jq -re '"" == (.summary.error // "")' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
-rc=$((rc | $?))
+echo '- degradation reached'
+if ! jq -re '0 != (.summary.imbalance_point.rps // 0 | tonumber)' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
-check_json_val \
-    'degradation reached' \
-    '.summary.imbalance_point.rps // 0 | tonumber' \
-    '!= 0'
-
-[[ $? == 0 ]]
-
-check_json_val \
-    'handled 3000 rps' \
-    '.summary.imbalance_point.rps // 0 | tonumber' \
-    '> 3000'
-
-[[ $? == 0 ]]
+echo '- handled 3000 rps'
+if ! jq -re '3000 < (.summary.imbalance_point.rps // 0 | tonumber)' <"$1" >/dev/null; then
+    echo "-- FAIL"
+    rc=1
+fi
 
 exit $rc

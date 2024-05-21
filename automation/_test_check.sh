@@ -11,74 +11,107 @@ source "$_SCRIPT_DIR/_functions.sh"
 # shellcheck source=_variables.sh
 source "$_SCRIPT_DIR/_variables.sh"
 
-assert_installed yc jq curl
-
 # ---------------------------------------------------------------------------- #
 #                            Arguments and constants                           #
 # ---------------------------------------------------------------------------- #
 
-declare -r _TEST_DIR=$1
-assert_not_empty _TEST_DIR
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --dir)
+        _TEST_DIR=$2
+        shift
+        shift
+        ;;
+    --id)
+        _TEST_ID=$2
+        shift
+        shift
+        ;;
+    --output | -o)
+        _OUTPUT_DIR=$2
+        shift
+        shift
+        ;;
+    --help | -h | *)
+        echo "Usage: $(basename "$0") --id TEST_ID [--dir SCRIPT_DIR] [-o OUTPUT_DIR]"
+        echo ""
+        echo "Obtain test results and check them with two check scripts in passed SCRIPT_DIR directory:"
+        # shellcheck disable=SC2016
+        echo '- SCRIPT_DIR/check_summary.sh $(yc --format json loadtesting test get TEST_ID)'
+        # shellcheck disable=SC2016
+        echo '- SCRIPT_DIR/check_report.sh $(yc --format json loadtesting test get-report-table TEST_ID)'
+        echo ""
+        echo "If corresponding checks are not found in SCRIPT_DIR, the default checks will be run instead."
+        exit 0
+        ;;
+    esac
+done
 
-declare -r _TEST_ID=$2
+assert_installed yc jq curl
+assert_not_empty _TEST_DIR
 assert_not_empty _TEST_ID
 
-declare -r _SUMMARY_JSON="$_TEST_OUTPUT_DIR/summary.json"
-declare -r _REPORT_JSON="$_TEST_OUTPUT_DIR/report.json"
-
-declare -r _CUSTOM_SUMMARY_CHECK="$_TEST_DIR/$VAR_CHECK_SUMMARY_SCRIPT_NAME"
-declare -r _CUSTOM_REPORT_CHECK="$_TEST_DIR/$VAR_CHECK_REPORT_SCRIPT_NAME"
-
-# ---------------------------------------------------------------------------- #
-#                          Determine checking scripts                          #
-# ---------------------------------------------------------------------------- #
-
-function first_existing {
-    for _file in "$@"; do
-        if [[ -f ${_file} ]]; then
-            echo "$_file"
-            return 0
-        fi
-    done
-    return 1
-}
-
-_SUMMARY_CHECK=$(first_existing "$_TEST_DIR/$VAR_CHECK_SUMMARY_SCRIPT_NAME" "$VAR_DEFAULT_CHECK_SUMMARY_SCRIPT_PATH")
-_REPORT_CHECK=$(first_existing "$_TEST_DIR/$VAR_CHECK_REPORT_SCRIPT_NAME" "$VAR_DEFAULT_CHECK_REPORT_SCRIPT_PATH")
-
-# ---------------------------------------------------------------------------- #
-#                            Retrieve data to check                            #
-# ---------------------------------------------------------------------------- #
-
-if ! yc_lt test get "$_TEST_ID" >"$_SUMMARY_JSON"; then
-    _log "ERROR!!! failed to download test summary"
-    exit 1
-fi
-if ! yc_lt test get-report-table "$_TEST_ID" >"$_REPORT_JSON"; then
-    _log "ERROR!!! failed to download test report"
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------- #
-#                                  Run checks                                  #
-# ---------------------------------------------------------------------------- #
+_OUTPUT_DIR=${_OUTPUT_DIR:-"./check-$_TEST_DIR"}
+mkdir -p "$_OUTPUT_DIR"
 
 set +e
-
 export -f run_script
 export -f check_json_val
 
-_logv 1 "Running script $_SUMMARY_CHECK"
-_CHECK_JSON_FILE="$_SUMMARY_JSON" _DEFAULT_CHECK="$VAR_DEFAULT_CHECK_SUMMARY_SCRIPT_PATH" \
-    run_script -- "$_SUMMARY_CHECK" "$_SUMMARY_JSON"
+rc=0
 
-_SUMMARY_RES=$?
+# ------------------------------- Check summary ------------------------------ #
+# -------------- (yc --format json loadtesting test get TEST_ID) ------------- #
 
-_logv 1 "Running script $_REPORT_CHECK"
-_CHECK_JSON_FILE="$_REPORT_JSON" _DEFAULT_CHECK="$VAR_DEFAULT_CHECK_REPORT_SCRIPT_PATH" \
-    run_script -- "$_REPORT_CHECK" "$_REPORT_JSON"
+if ! yc_lt test get "$_TEST_ID" >"$_OUTPUT_DIR/summary.json"; then
+    echo "ERROR!!! failed to download test summary"
+    exit 1
+fi
 
-_REPORT_RES=$?
+export _DEFAULT_CHECK="$_SCRIPT_DIR/default_check_summary.sh"
+if [[ -f "$_TEST_DIR/check_summary.sh" ]]; then
+    echo "Running: $_TEST_DIR/check_summary.sh $_OUTPUT_DIR/summary.json"
+    if ! /usr/bin/env bash "$_TEST_DIR/check_summary.sh" "$_OUTPUT_DIR/summary.json"; then
+        rc=1
+    fi
 
-((_SUMMARY_RES == 0 && _REPORT_RES == 0))
-exit $?
+elif [[ -f "$_DEFAULT_CHECK" ]]; then
+    echo "Running: $_DEFAULT_CHECK $_OUTPUT_DIR/summary.json"
+    if ! /usr/bin/env bash "$_DEFAULT_CHECK" "$_OUTPUT_DIR/summary.json"; then
+        rc=1
+    fi
+
+else
+    echo "ERROR: check_summary.sh script not found"
+    rc=1
+fi
+
+# ------------------------------- Check report ------------------------------- #
+# ------- (yc --format json loadtesting test get-report-table TEST_ID) ------- #
+
+if ! yc_lt test get-report-table "$_TEST_ID" >"$_OUTPUT_DIR/report.json"; then
+    echo "ERROR!!! failed to download test report"
+    exit 1
+fi
+
+export _DEFAULT_CHECK="$_SCRIPT_DIR/default_check_report.sh"
+if [[ -f "$_TEST_DIR/check_report.sh" ]]; then
+    echo "Running: $_TEST_DIR/check_report.sh $_OUTPUT_DIR/report.json"
+    if ! /usr/bin/env bash "$_TEST_DIR/check_report.sh" "$_OUTPUT_DIR/report.json"; then
+        rc=1
+    fi
+
+elif [[ -f "$_DEFAULT_CHECK" ]]; then
+    echo "Running: $_DEFAULT_CHECK $_OUTPUT_DIR/report.json"
+    if ! /usr/bin/env bash "$_DEFAULT_CHECK" "$_OUTPUT_DIR/report.json"; then
+        rc=1
+    fi
+
+else
+    echo "ERROR: check_summary.sh script not found"
+    rc=1
+fi
+
+# ----------------------------------- exit ----------------------------------- #
+
+exit $rc

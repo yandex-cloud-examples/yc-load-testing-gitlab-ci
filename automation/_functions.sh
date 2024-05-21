@@ -1,16 +1,42 @@
 #!/usr/bin/env bash
 
+if [[ -v _LOG_STAGE_STR ]]; then
+    export _LOG_STAGE=()
+    IFS=$'\n' read -d '' -ra _LOG_STAGE <<< "$_LOG_STAGE_STR" || true
+else
+    export _LOG_STAGE_STR=''
+    export _LOG_STAGE=()
+fi
+
+function _log_push_stage {
+    _LOG_STAGE+=("$1")
+    _LOG_STAGE_STR=$(IFS=$'\n'; echo "${_LOG_STAGE[*]}")
+}
+
+function _log_pop_stage {
+    if [[ ${#_LOG_STAGE[@]} -gt 0 ]]; then
+        _N=${#_LOG_STAGE[@]}
+        _LOG_STAGE=("${_LOG_STAGE[@]::${_N}-1}")
+    fi
+    _LOG_STAGE_STR=$(IFS=$'\n'; echo "${_LOG_STAGE[*]}")
+}
+
+function _log_stage {
+    _log_pop_stage
+    _log_push_stage "$1"
+}
+
 function _log {
     if [[ "$1" == '-f' ]]; then
         shift
-        cat >&2 "$@"
+        echo >&2 "${_LOG_STAGE[*]}" ":" && cat >&2 "$@"
     else
-        echo >&2 "$@"
+        echo >&2 "${_LOG_STAGE[*]}" ":" "$@"
     fi
 }
 
 function _logv {
-    if [[ ${VERBOSE:-0} -ge "$1" ]]; then
+    if [[ $VAR_VERBOSE -ge "$1" ]]; then
         shift
         _log "$@"
     fi
@@ -34,14 +60,6 @@ function assert_not_empty {
     return 0
 }
 
-function assert_exists {
-    if [[ -z "${!1+empty}" ]]; then
-        _log "ERROR!!! Assertion failed: variable $1 is not defined"
-        exit 1
-    fi
-    return 0
-}
-
 function rand_str {
     (
         set +o pipefail
@@ -50,7 +68,7 @@ function rand_str {
 }
 
 function run_script {
-    /usr/bin/env bash "$@"
+    /usr/bin/env bash -- "$@"
 }
 
 function yc_ {
@@ -113,16 +131,10 @@ function yc_s3_delete {
     return $?
 }
 
-function concat_optional {
-    local -r lhs=$1
-    local -r rhs=$2
-    local -r delimiter=$3
-    if [[ -n "$lhs" && -n "$rhs" ]]; then
-        echo "${lhs}${delimiter}${rhs}"
-    else
-        echo "${lhs:-"$rhs"}"
-    fi
-    return 0
+function yc_test_url {
+    local -r test_id=$1
+    local -r folder_id=${VAR_FOLDER_ID:-$(yc_ config get folder-id)}
+    echo "$VAR_WEB_CONSOLE_URL/folders/$folder_id/load-testing/tests/$test_id"
 }
 
 function check_json_val {

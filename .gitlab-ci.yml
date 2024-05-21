@@ -1,0 +1,42 @@
+include:
+  - templates/.gitlab-loadtesting-ci.yml
+
+stages:
+  - test-loadtesting
+  - test-loadtesting-cleanup
+
+.YC_LT_VARS: &YC_LT_VARS
+  YC_LT_FOLDER_ID: "###SECRET###"
+
+  YC_LT_AGENTS_CNT: 2
+  YC_LT_AGENT_SA_ID: "###SECRET###"
+  YC_LT_AGENT_ZONE: "###SECRET###"
+  YC_LT_AGENT_SUBNET_ID: "###SECRET###"
+  YC_LT_AGENT_SECURITY_GROUP_IDS: "###SECRET###"
+
+  YC_LT_TARGET: "###SECRET###"
+
+test-loadtesting-create-agents:
+  extends: .yc-template-lt-job-create-compute-agent
+  stage: test-loadtesting
+  variables: *YC_LT_VARS
+
+test-loadtesting-delete-agents:
+  extends: .yc-template-lt-job-delete-compute-agent
+  stage: test-loadtesting-cleanup
+  variables: *YC_LT_VARS
+
+load-test-run:
+  extends: .yc-template-lt-job-run-test
+  stage: test-loadtesting
+  needs: [test-loadtesting-create-agents]
+  variables: 
+    <<: *YC_LT_VARS
+    YC_LT_DATA_BUCKET: loadtesting-data-lt
+    YC_LT_TESTS: |-
+      sample-tests/smoke
+      sample-tests/mixed-synthetic-payload
+      sample-tests/mixed-irl-payload
+      sample-tests/mixed-irl-payload-multi
+      sample-tests/root-const
+      sample-tests/root-imbalance

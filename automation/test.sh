@@ -11,6 +11,27 @@ source "$_SCRIPT_DIR/_functions.sh"
 # shellcheck source=_variables.sh
 source "$_SCRIPT_DIR/_variables.sh"
 
+_DIRS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --help | -h)
+        echo "Usage: $(basename "$0") TEST_DIR1 [TEST_DIR2]..."
+        echo ""
+        echo "Sequentially run and check results of tests defined in directories passed as arguments,"
+        echo "print summary."
+        echo ""
+        echo "Specifically, for each provided argument:"
+        echo "1. call '_test_run.sh TEST_DIR' to run the test (see '_test_run.sh --help')"
+        echo "2. call '_test_check.sh --id TEST_ID --dir TEST_DIR' to check the results (see '_test_check.sh --help')"
+        exit 0
+        ;;
+    *)
+        _DIRS+=("$1")
+        shift
+        ;;
+    esac
+done
+
 assert_installed yc jq curl
 
 _logv 1 "YC CLI provile: ${VAR_CLI_PROFILE:-"current aka <$(yc_ config profile list | grep ' ACTIVE')>"}"
@@ -36,65 +57,79 @@ if [[ -z "${VAR_FOLDER_ID:-$(yc_ config get folder-id)}" ]]; then
     exit 1
 fi
 
-declare -ir _TOTAL_CNT="$#"
-declare -i _FAILED_CNT=0
-declare _FAILED_TESTS=()
+declare -i _tests_total="${#_DIRS[@]}"
+declare -i _tests_failed=0
+declare _tests_failure_reports=()
 
-mkdir -p "$VAR_OUTPUT_DIR"
+_log_push_stage ""
+_log_push_stage ""
+for _test_dir in "${_DIRS[@]}"; do
+    _log_pop_stage
+    _log_pop_stage
+    _log_push_stage "[$_test_dir]"
+    _log_push_stage "[ENTER]"
 
-declare -r _TEST_DIRECTORIES=("$@")
-for _dir in "${_TEST_DIRECTORIES[@]}"; do
-    _log "-> [RUN]: $_dir"
-
-    if _test_id=$(run_script "$_SCRIPT_DIR/_test_run.sh" "$_dir"); then
-        _log "-> [RUN]: success (test_id=$_test_id)"
-    else
-        ((_FAILED_CNT += 1))
-        _FAILED_TESTS+=("RUN FAILED: $_dir")
-
-        _log "-> [RUN]: fail"
+    _log "Checking..."
+    if [[ ! -d "$_test_dir" ]]; then
+        _msg="FAILED: test dir does not exist"
+        _tests_failure_reports+=("$(_log "$_msg" 2> >(tee /dev/stderr))")
+        _tests_failed=$((_tests_failed + 1))
         continue
     fi
 
-    export _TEST_OUTPUT_DIR="$VAR_OUTPUT_DIR/$_test_id"
-    mkdir -p "$_TEST_OUTPUT_DIR"
-
-    if [[ "${VAR_SKIP_TEST_CHECK:-0}" == 0 ]]; then
-        _check_result_file="$_TEST_OUTPUT_DIR/check_result.txt"
-        _log "-> [CHECK]: begin"
-        if run_script "$_SCRIPT_DIR/_test_check.sh" "$_dir" "$_test_id" >"$_check_result_file"; then
-            _logv 1 -f <"$_check_result_file"
-            _log "-> [CHECK]: success"
-        else
-            ((_FAILED_CNT += 1))
-            _FAILED_TESTS+=("CHECK FAILED: $_dir. Result in $_check_result_file")
-
-            _log -f <"$_check_result_file"
-            _log "-> [CHECK]: failed"
-        fi
-        _log ""
+    _test_id=
+    _log_stage "[RUN]"
+    _log "Running..."
+    if _test=$(run_script "$_SCRIPT_DIR/_test_run.sh" "$_test_dir"); then
+        _test_id=$(jq -r '.id' <<< "$_test")
+        _logv 1 "ID=$_test_id"
+        _logv 1 "STATUS=$(jq -r '.summary.status' <<< "$_test")"
+        _log "FINISHED: $(yc_test_url "$_test_id")/test-report)"
     else
-        _log "-> [CHECK]: skip due to YC_LT_SKIP_TEST_CHECK"
-        _log ""
+        _msg="FAILED: error; test=$_test"
+        _tests_failure_reports+=("$(_log "$_msg" 2> >(tee /dev/stderr))")
+        _tests_failed=$((_tests_failed + 1))
+        continue
     fi
 
+    _log_stage "[CHECK]"
+    if [[ "${VAR_SKIP_TEST_CHECK:-0}" == 0 ]]; then
+        _out_dir="$VAR_OUTPUT_DIR/$_test_id"
+        _resfile="$_out_dir/check_result.txt"
+        mkdir -p "$_out_dir"
+
+        _log "Performing checks..."
+        if run_script "$_SCRIPT_DIR/_test_check.sh" --id "$_test_id" --dir "$_test_dir" -o "$_out_dir"  >"$_resfile"; then
+            _logv 1 -f <"$_resfile"
+            _log "ALL CHECKS PASSED"
+        else
+            _log -f <"$_resfile"
+            _msg="FAILED: checks did not pass. Result in $_resfile"
+            _tests_failure_reports+=("$(_log "$_msg" 2> >(tee /dev/stderr))")
+            _tests_failed=$((_tests_failed + 1))
+        fi
+    else
+        _log "skipped due to YC_LT_SKIP_TEST_CHECK"
+    fi
+
+    _log ""
 done
 
-_SUCCESS_CNT=$((_TOTAL_CNT - _FAILED_CNT))
-_S="[ OK - $_SUCCESS_CNT | FAILED - $_FAILED_CNT ]"
+_log_pop_stage
+_log_pop_stage
+_log_stage ""
 
-_log "==================== $_S ===================="
+_summary_header="[ OK - $((_tests_total - _tests_failed)) | FAILED - $_tests_failed ]"
+_log "==================== $_summary_header ===================="
 _log ""
-if ((_FAILED_CNT != 0)); then
-    _log "$_FAILED_CNT out of $_TOTAL_CNT tests have failed:"
-    _log "$(
-        IFS=$'\n'
-        echo "${_FAILED_TESTS[*]}"
-    )"
+if ((_tests_failed != 0)); then
+    _log "$_tests_failed out of $_tests_total tests have failed:"
+    for _msg in "${_tests_failure_reports[@]}"; do
+        _log "$_msg"
+    done
 fi
 _log ""
-_log "==================== $_S ===================="
+_log "==================== $_summary_header ===================="
 
-echo "$_FAILED_CNT"
-
-exit "$_FAILED_CNT"
+echo "$_tests_failed"
+exit "$_tests_failed"

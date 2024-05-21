@@ -30,6 +30,11 @@ function _def_var {
 #                                    General                                   #
 # ---------------------------------------------------------------------------- #
 
+# env: YC_LT_VERBOSE
+# format: 0, 1, 2
+# Scripts verbosity level
+_def_var VERBOSE "0"
+
 # env: YC_LT_OUTPUT_DIR
 # format: path to local directory
 _def_var OUTPUT_DIR "$PWD/.loadtesting"
@@ -147,55 +152,18 @@ _def_var TEST_EXTRA_LABELS "ci=true"
 # Additional (to the one specified in meta.json) description which which tests will be creatd.
 _def_var TEST_EXTRA_DESCRIPTION ""
 
-# env: YC_LT_TEST_NAME_PREFIX
-# format: string
-# Name prefix with which tests will be created.
-_def_var TEST_NAME_PREFIX "ci-test"
-
-# env: YC_LT_TEST_MULTI_FACTOR
-# format: positive number
-# Default number of agents generating load for a single test.
-_def_var TEST_MULTI_FACTOR "1"
-
 # ---------------------------------------------------------------------------- #
 #                            Constants customization                           #
 # ---------------------------------------------------------------------------- #
-
-# env: YC_LT_TEST_META_FILE
-# format: filename
-_def_var TEST_META_FILE "meta.json"
 
 # env: YC_LT_TEST_CONFIG_MASK
 # format: GLOB mask
 _def_var TEST_CONFIG_MASK "test-config*.yaml"
 
-# env: YC_LT_DEFAULT_CHECK_SUMMARY_SCRIPT_PATH
-# format: path to local file
-# A path pointing to default shell script performing postprocess test checks.
-_def_var DEFAULT_CHECK_SUMMARY_SCRIPT_PATH "$_SCRIPT_DIR/default_check_summary.sh"
-
-# env: YC_LT_DEFAULT_CHECK_REPORT_SCRIPT_PATH
-# format: path to local file
-# A path pointing to default shell script performing postprocess test checks.
-_def_var DEFAULT_CHECK_REPORT_SCRIPT_PATH "$_SCRIPT_DIR/default_check_report.sh"
-
-# env: CHECK_SUMMARY_SCRIPT_NAME
-# format: filename
-_def_var CHECK_SUMMARY_SCRIPT_NAME "check_summary.sh"
-
-# env: YC_LT_CHECK_REPORT_SCRIPT_NAME
-# format: filename
-_def_var CHECK_REPORT_SCRIPT_NAME "check_report.sh"
-
 # env: YC_LT_OBJECT_STORAGE_URL
 # format: url
 _def_var OBJECT_STORAGE_URL "https://storage.yandexcloud.net"
 
-# ---------------------------------------------------------------------------- #
-#                                     Debug                                    #
-# ---------------------------------------------------------------------------- #
-
-# env: YC_LT_AGENT_IDS
-# format: list of cloud-id in format [id[,id[,...]]]
-# ! for debug 
-_def_var AGENT_IDS ""
+# env: YC_LT_WEB_CONSOLE_URL
+# format: url
+_def_var WEB_CONSOLE_URL "https://console.yandex.cloud"
