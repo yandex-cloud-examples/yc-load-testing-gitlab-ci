@@ -26,7 +26,7 @@ test-loadtesting-delete-agents:
   stage: test-loadtesting-cleanup
   variables: *YC_LT_VARS
 
-load-test-run:
+test-loadtesting-run:
   extends: .yc-template-lt-job-run-test
   stage: test-loadtesting
   needs: [test-loadtesting-create-agents]

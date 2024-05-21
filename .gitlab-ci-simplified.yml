@@ -23,7 +23,7 @@ stages:
   - test-loadtesting-cleanup
 
 test-loadtesting-create-agents:
-  extends: .test-loadtesting-template
+  extends: .test-loadtesting-template-job
   stage: test-loadtesting
   script:
     - set -e
@@ -36,8 +36,8 @@ test-loadtesting-create-agents:
         --cores 2 \
         --memory 2G
 
-load-test-run:
-  extends: .test-loadtesting-template
+test-loadtesting-run:
+  extends: .test-loadtesting-template-job
   stage: test-loadtesting
   needs: [test-loadtesting-create-agents]
   script:
@@ -47,15 +47,15 @@ load-test-run:
     - export YC_LT_TEST_AGENT_FILTER="labels.pipeline = '${CI_PIPELINE_IID}'"
     - export YC_LT_TEST_EXTRA_DESCRIPTION="GitLab CI url - ${CI_PIPELINE_URL}"
     - automation/test.sh \
-        sample-tests/smoke
-        sample-tests/mixed-synthetic-payload
-        sample-tests/mixed-irl-payload
-        sample-tests/mixed-irl-payload-multi
-        sample-tests/root-const
+        sample-tests/smoke \
+        sample-tests/mixed-synthetic-payload \
+        sample-tests/mixed-irl-payload \
+        sample-tests/mixed-irl-payload-multi \
+        sample-tests/root-const \
         sample-tests/root-imbalance
 
 test-loadtesting-delete-agents:
-  extends: .test-loadtesting-template
+  extends: .test-loadtesting-template-job
   stage: test-loadtesting-cleanup
   when: always
   interruptible: false
