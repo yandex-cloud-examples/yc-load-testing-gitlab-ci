@@ -1,6 +1,7 @@
 .test-loadtesting-template:
   before_script: 
     - if [[ -z $YC_LT_AUTHORIZED_KEY_JSON ]]; then exit 1; fi
+    - if [[ -z $YC_LT_FOLDER_ID ]]; then exit 1; fi
 
     # ----------------------------- install utilities ---------------------------- #
     - DEBIAN_FRONTEND=noninteractive apt update
