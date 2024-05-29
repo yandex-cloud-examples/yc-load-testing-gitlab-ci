@@ -32,68 +32,76 @@ _Управление внешними агентами нагрузочного
     - `compute.editor`
     - `vpc.user`
     - `vpc.publicAdmin` (опционально, если агент будет разворачиваться в публичной сети)
-3. (Опционально) Для использования хранящихся в репозитории файлов с тестовыми данными, CI необходим бакет в Object Storage, куда эти файлы будут временно загружаться на время выполнения теста (**Сервис Load Testing не имеет доступа к вашим тестовым данным**). Сервисному аккаунту, в таком случае нужно одно из:
-    - глобальная роль `storage.editor`
-    - роль `editor` в ACL у конкретного бакета
-4. [Создайте](https://yandex.cloud/ru/docs/iam/concepts/authorization/key) авторизованный ключ для сервисного аккаунта, сохраните `json` файл
-  с ключом локально на диск.
+3. (Опционально) Для использования файлов из репозитория в качестве тестовых данных, необходимо использовать промежуточное хранилище в виде бакета в Object Storage (во время выполнения теста, CI будет туда файлы, а агент скачивать):
+    - создайте бакет в Object Storage
+    - выдайте права на запись одним из следующих способов:
+        - `storage.editor` (глобальная роль в каталоге)
+        - `editor` (ACL в бакете)
+4. [Создайте](https://yandex.cloud/ru/docs/iam/concepts/authorization/key) авторизованный ключ для сервисного аккаунта, сохраните `json` файл с ключом локально на диск.
 5. [Добавьте](https://docs.gitlab.com/ee/ci/variables/#for-a-project) переменную `YC_LOADTESTING_CI_AUTHORIZED_KEY_JSON` в настройках **GitLab CI**. В качестве значения, вставьте содержимое скачанного `json` файла авторизованного ключа.
 
 ---
 
-## 2. Настройте pipeline для нагрузочного тестирования в GitLab CI
+## 2. Добавьте файлы с конфигурациями нагрузочных тестов в репозиторий
 
-### 2.1. Подключите GitLab CI шаблон нагрузочного тестирования в `gitlab-ci.yml`
-1. Скачайте [шаблон .gitlab-loadtesting-ci.yml](templates/.gitlab-loadtesting-ci.yml), добавьте его в свой `git` репозиторий в папку `templates`
-2. Подключите скачанный шаблон в ваш `gitlab-ci.yml`:
-    ```yaml
-    # .gitlab-ci.yml
+Для каждого теста, который планируется запускать, должна быть создана отдельная папка:
+  - файл конфигурации сохраните под именем, соответствующим маске `test-config*.yaml`.
+  - файлы с тестовыми данными положите рядом - перед выполнением теста они будут временно загружены в Object Storage, а во время выполнения, агент их оттуда скачает.
 
-    include:
-    - templates/.gitlab-loadtesting-ci.yml
-    ```
-3. Скопируйте [дополнительные скрипты](automation/) в произвольное место в своем репозитории, укажите путь до выбранной папки в переменной `YC_LT_AUTOMATION_SCRIPTS_DIR` в `gitlab-ci.yml`:
+Имя теста, в таком случае, будет соответствовать имени папки, в которой находится файл конфигурации. 
 
-    ```yaml
-    # .gitlab-ci.yml
+_**Прим: О том, как переопределить имя создаваемого теста, а так же другие параметры запуска, можно прочитать [здесь](README-howto-add-test.md).**_
 
-    variables:
-      YC_LT_AUTOMATION_SCRIPTS_DIR: "./ci/loadtesting"
-    ```
+_**Примеры можно посмотреть в папке [sample-tests](sample-tests/).**_
 
 ---
 
-### 2.2. В `gitlab-ci.yml` определите переменные
+## 3. Настройте pipeline для нагрузочного тестирования в GitLab CI
 
-Минимальные наборы необходимых переменных приведены ниже
+### 3.1. Создайте родительский `job` для с настройкой необходимого для запуска тестов окружения
 
-**Без разворачивания агентов в `compute`**
+Для создания тестов и управления агентами в рамках CI, необходимо следующее:
+  - установлены утилиты командной строки: `curl`, `jq`.
+  - установлена и настроена утилита командной строки [YC CLI](https://yandex.cloud/ru/docs/cli/).
+
+В данной инструкции мы добавим `job` `.test-loadtesting-template`, и все последующие шаги будем наследовать от нее с помощью `extends: .test-loadtesting-template`.
+
 ```yaml
 # .gitlab-ci.yml
 
-.loadtesting-variables: &loadtesting-variables
-  YC_LT_FOLDER_ID: '' # <-- id каталога
+.test-loadtesting-template:
+  variables:
+    # авторизованный ключ сервисного аккаунта
+    YC_LT_AUTHORIZED_KEY_JSON: ${YC_LOADTESTING_CI_AUTHORIZED_KEY_JSON} 
+    # id каталога для сервиса Load Testing
+    YC_LT_FOLDER_ID: '%%%_CHANGE_ME_%%%'
+  before_script: 
+    - if [[ -z $YC_LT_AUTHORIZED_KEY_JSON ]]; then exit 1; fi
+    - if [[ -z $YC_LT_FOLDER_ID ]]; then exit 1; fi
+
+    # ----------------------------- install utilities ---------------------------- #
+    - DEBIAN_FRONTEND=noninteractive apt update
+    - DEBIAN_FRONTEND=noninteractive apt install -y curl jq
+
+    - curl -f -s -LO https://storage.yandexcloud.net/yandexcloud-yc/install.sh
+    - bash install.sh -i /usr/local/yandex-cloud -n
+    - ln -sf /usr/local/yandex-cloud/bin/yc /usr/local/bin/yc
+
+    # ----------------------------- configure yc cli ----------------------------- #
+    - echo "${YC_LT_AUTHORIZED_KEY_JSON}" > key.json
+    - yc config profile create sa-profile
+    - yc config set service-account-key key.json
+    - yc config set format json
+    - yc config set folder-id ${YC_LT_FOLDER_ID}
 ```
 
-**С разворачиванием агентов в `compute`**
-```yaml
-# .gitlab-ci.yml
-
-.loadtesting-variables: &loadtesting-variables
-  YC_LT_FOLDER_ID: '' # id каталога
-
-  YC_LT_AGENTS_CNT: 1 # количество агентов, разворачиваемых при запуске флоу
-  YC_LT_AGENT_SA_ID: '' # id сервисного аккаунта
-  YC_LT_AGENT_ZONE: 'ru-central1-b' # зона доступности, в которой будут разворачиваться ВМ
-  YC_LT_AGENT_SUBNET_ID: '' # id подсети в указанной зоне доступности
-  YC_LT_AGENT_SECURITY_GROUP_IDS: '' # id группы безопасности ВМ
-```
-
-Полный список переопределяемых параметров можно посмотреть [тут](automation/_variables.sh).
+_**Прим: Для того, чтобы избежать необходимости настройки окружения при каждом запуске, вы также можете выполнить эту настройку непосредственно на GitLab Runner.**_
 
 ---
 
-### 2.3. (Опционально) Добавьте в CI кубики с созданием и удалением агентов
+### 3.2. (Опционально) Добавьте шаги для управления временными `compute` агентами
+
+Чтобы избежать простоя агентских ВМ, добавьте шаги по их созданию и удалению в рамках `pipeline`.
 
 ```yaml
 # .gitlab-ci.yml
@@ -105,33 +113,41 @@ stages:
   # ... стадии "после"
 
 test-loadtesting-create-agents:
-  extends: .yc-template-lt-job-create-compute-agent
+  extends: .test-loadtesting-template-job
   stage: test-loadtesting
-  variables: *loadtesting-variables
+  script:
+    - set -e
+    - automation/agent.sh create --count 2 \
+        --description "CI agent" \
+        --labels "pipeline=${CI_PIPELINE_IID}" \
+        --service-account-id "###SECRET###" \
+        --zone "###SECRET###" \
+        --network-interface "subnet-id=###SECRET###,security-group-ids=###SECRET###" \
+        --cores 2 \
+        --memory 2G
 
 test-loadtesting-delete-agents:
-  extends: .yc-template-lt-job-delete-compute-agent
+  extends: .test-loadtesting-template-job
   stage: test-loadtesting-cleanup
-  variables: *loadtesting-variables
+  when: always
+  interruptible: false
+  script:
+    - set -e
+    - automation/agent.sh delete \
+        --labels "pipeline=${CI_PIPELINE_IID}"
 ```
 
-_**Прим: дополнительная стадия нужна для того, чтобы гарантировать удаление агентов по завершению работы.**_
+  1. `test-loadtesting-create-agents` - создание агентов; параметры, передаваемые в `automation/agent.sh create` необходимо заменить на свои значения
+      - `stage: test-loadtesting`, в этой же стадии будут запускаться тесты
+      - `automation/agent.sh create` совместим `yc loadtesting agent create`, но добавлен параметр `--count` для удобного создания нескольких агентов одновременно.
+
+  2. `test-loadtesting-delete-agents` - удаление агентов
+      - `stage: test-loadtesting-cleanup`, стадия должна запускаться даже если во время создания агентов или запуска произошла ошибка
+      - `automation/agent.sh delete` - дополнительный скрипт, который удаляет с метками, передаваемыми в `--labels "label1=valu1,label2=value2"`
 
 ---
 
-### 2.4. Добавьте файлы с описанием нагрузочных тестов в репозиторий
-
-Для каждого теста, который планируется запускать, должна быть создана отдельная папка:
-  - файл конфигурации сохраните под именем, соответствующим маске `test-config*.yaml`
-  - файлы с тестовыми данными положите рядом - перед выполнением теста они будут временно загружены в Object Storage, а во время выполнения, агент их оттуда скачает
-
-Имя теста, в таком случае, будет соответствовать имени папки, в которой находится файл конфигурации. 
-
-_**Прим: О том, как переопределить имя создаваемого теста, а так же другие параметры запуска, можно прочитать [здесь](README-howto-add-test.md).**_
-
----
-
-### 2.5. Добавьте в CI кубик с запуском тестов
+### 3.3. Определите шаг с запуска нагрузочных тестов
 
 ```yaml
 # .gitlab-ci.yml
@@ -142,62 +158,79 @@ stages:
   # ... стадии "после"
 
 test-loadtesting-run:
-  extends: .yc-template-lt-job-run-test
+  extends: .test-loadtesting-template-job
   stage: test-loadtesting
-  # при настроенных агентских кубиках, строчку ниже нужно раскомментировать
-  # needs: [test-loadtesting-create-agents] 
-  variables:
-    <<: *loadtesting-variables
-    YC_LT_DATA_BUCKET: ''
-    YC_LT_TESTS: |-
-      sample-tests/smoke
-      sample-tests/mixed-synthetic-payload
-      sample-tests/mixed-irl-payload
-      sample-tests/mixed-irl-payload-multi
-      sample-tests/root-const
-      sample-tests/root-imbalance
+
+  # ресурсная группа, предотвращает параллельное выполнение 
+  # нагрузочных тестов из нескольких pipeline
+  resource_group: loadtesting 
+
+  # шаг создания compute агентов
+  needs: [test-loadtesting-create-agents] 
+
+  script:
+    - set -e
+
+    # automation/test.sh умеет заменять ${YC_LT_TARGET} в файлах
+    # c тестовыми конфигурациями
+    #
+    - export YC_LT_TARGET="###SECRET###"
+  
+    # имя Object Storage бакета, используемого для передачи на агент
+    # хранящихся в репозитории файлов с тестовыми данными
+    #
+    - export YC_LT_DATA_BUCKET="###SECRET###"
+
+    # определяем критерий выбора агентов, на которых будут запускаться тесты
+    #
+    - export YC_LT_TEST_AGENT_FILTER="labels.pipeline = '${CI_PIPELINE_IID}'"
+
+    # добавляем ссылку на pipeline в описание создаваемых тестов
+    #
+    - export YC_LT_TEST_EXTRA_DESCRIPTION="GitLab CI url - ${CI_PIPELINE_URL}"
+
+    # передаем список тестов для запуска
+    #
+    - automation/test.sh \
+        sample-tests/smoke \
+        sample-tests/mixed-synthetic-payload \
+        sample-tests/mixed-irl-payload \
+        sample-tests/mixed-irl-payload-multi \
+        sample-tests/root-const \
+        sample-tests/root-imbalance
+
 ```
 
-Переменные:
-- `YC_LT_DATA_BUCKET` - имя Object Storage бакета. Бакет должен находиться в том же каталоге облака,
-  куда загружаются тесты.
+`automation/test.sh` принимает набор директорий, в которых находятся конфигурации тестов. Для каждого теста-директории выполняются следующии шаги:
+- Подготовка:
+  1. Помечает все неконфигурационные файлы в директории как файлы с тестовыми данными.
+  2. Выгружает файлы с тестовыми данными в бакет `YC_LT_DATA_BUCKET`.
+  3. Определяет парамеры создания тестас помощью `meta.json`. Параметры включают в себя: описание теста; метки теста; обязательные метки агентов; дополнительные файлы с тестовыми данными; количество агентов для параллельного запуска.
+- Запуск:
+  1. Создает тест.
+  2. Дожидается завершения его выполнения.
+- Проверка с помощью `automation/_test_check.sh`:
+  1. Выполняет скрипт проверки свойств теста `test_dir/check_summary.sh`.
+  2. Выполняет скрипт проверки результатов теста `test_dir/check_report.sh`.
 
-  - **WARNING: У сервисного аккаунта, с которым запускается агент, должны быть права на чтение файлов из этого бакета.**
-
-  - **WARNING2: У сервисного аккаунта, ключ которого используется в GitLab CI, должны быть права на загрузку файлов в этот бакет.**
-- `YC_LT_TESTS` - список директорий с тестами, которые необходимо запустить в рамках этого кубика.
-
-#### Если используются свои агенты
-
-Дополнительно, если за создание/удаление агентов отвечают НЕ предлагаемые выше кубики, нужно определить
-переменную `YC_LT_TEST_AGENT_FILTER` со значенем, cоответствующим по формату полю `filter` в `loadtesting.AgentService/List` API. 
-
-_**Прим: Протестировать валидность фильтра можно через CLI: `yc loadtesting agent list --filter "MY_FILTER_STRING"`.**_
-
-Например:
-
-```yaml
-# .gitlab-ci.yaml 
-
-# test-loadtesting-run:
-#   variables:
-
-# агенты с именем, содержащим `my-string`
-YC_LT_TEST_AGENT_FILTER: 'name contains "my-string"'
-
-# агенты с метками `k: v` и `k2: v2`
-YC_LT_TEST_AGENT_FILTER: `labels.k = "v" and labels.k2 = "v2"`
-```
+Дополнительно, `automation/test.sh` учитывает следующие переменные окружения:
+- `YC_LT_DATA_BUCKET` - имя Object Storage бакета, используемого для передачи на агент хранящихся в репозитории файлов с тестовыми данными.
+    - **WARNING: У сервисного аккаунта, с которым запускается агент, должны быть права на чтение файлов из этого бакета.**
+    - **WARNING2: У сервисного аккаунта, ключ которого используется в GitLab CI, должны быть права на загрузку файлов в этот бакет.**
+- `YC_LT_TEST_AGENT_FILTER` - дополнительный фильтр для выбора агентов
+    - _**Прим: Протестировать валидность фильтра можно через CLI:**_  
+      `yc loadtesting agent list --filter "MY_FILTER_STRING"`.
+- `YC_LT_SKIP_TEST_CHECK` - флаг, отключащий стадию проверок (любое отличное от `0` значение для отключения).
 
 ---
 
-### 2.6 (Опционально) Настройте правила запуска нагрузочных тестов
+### 3.4. (Дополнительно) Настройте правила запуска нагрузочных тестов
 
 - По коммитам в основноую ветку
 - По обновлению в Pull Request
 
 ---
 
-### 2.7. (Опционально) Настройте графики регрессий
+### 3.5. (Дополнтительно) Настройте графики регрессий
 
 Чтобы следить за эволюцией производительности сервиса/теста во времени, вы можете создать и настроить [графики регрессий](https://yandex.cloud/ru/docs/load-testing/concepts/load-test-regressions).
