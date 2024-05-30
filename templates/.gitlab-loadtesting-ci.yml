@@ -1,0 +1,138 @@
+.yc-template-lt-default-vars: &yc-template-lt-default-vars
+  # A list of test (string separated by spaces or new lines) directories
+  # containing configuration files and (optionally) meta.json.
+  #
+  # Each directory correstponds to a single test being run during pipeline.
+  YC_LT_TESTS: ''
+
+  # See details here: https://yandex.cloud/en/docs/load-testing/quickstart#before-you-begin
+  YC_LT_FOLDER_ID: ''
+
+  # Authorized key json string
+  # See details here: https://yandex.cloud/en/docs/iam/concepts/authorization/key
+  YC_LT_AUTHORIZED_KEY_JSON: ${YC_LOADTESTING_CI_AUTHORIZED_KEY_JSON}
+
+  # Whether to install required dependencies on runner in templated jobs.
+  YC_LT_INSTALL_RUNNER_DEPENDENCIES: true
+
+  YC_LT_AGENT_LABELS: "pipeline=${CI_PIPELINE_IID},source=gitlab-ci"
+  YC_LT_AGENT_NAME_PREFIX: "onetime-gitlab-ci-agent-"
+  YC_LT_AGENT_DESCRIPTION: "GitLab CI url: ${CI_PIPELINE_URL}"
+
+  YC_LT_TEST_AGENT_FILTER: "labels.pipeline = '${CI_PIPELINE_IID}' and labels.source = gitlab-ci"
+  YC_LT_TEST_EXTRA_LABELS: "branch=${CI_COMMIT_BRANCH},commit=${CI_COMMIT_SHORT_SHA},project=${CI_PROJECT_PATH_SLUG}"
+  YC_LT_TEST_EXTRA_DESCRIPTION: "GitLab CI url: ${CI_PIPELINE_URL}"
+
+  YC_LT_OUTPUT_DIR: "./.loadtesting"
+  YC_LT_AUTOMATION_SCRIPTS_DIR: "./automation"
+  YC_LT_AUTOMATION_SCRIPTS_URL: https://raw.githubusercontent.com/yandex-cloud-examples/yc-load-testing-gitlab-ci/main/automation
+
+  YC_LT_VERBOSE: '1'
+  YC_LT_CLI_INTERACTIVE: '0'
+  YC_LT_AUTOMATION_SCRIPTS: |-
+    _agent_create.sh
+    _agent_delete.sh
+    _functions.sh
+    _compose_test_create_args.sh
+    _test_check.sh
+    _test_run.sh
+    _variables.sh
+    agent.sh
+    default_check_report.sh
+    default_check_summary.sh
+    test.sh
+
+######################################################################################################
+######################################################################################################
+######################################################################################################
+
+.shared:
+  yc-template-lt-install-deps: &yc-template-lt-install-deps |-
+    if [[ "$YC_LT_INSTALL_RUNNER_DEPENDENCIES" == true ]]; then
+      DEBIAN_FRONTEND=noninteractive apt update
+      DEBIAN_FRONTEND=noninteractive apt install -y curl jq
+
+      curl -f -s -LO https://storage.yandexcloud.net/yandexcloud-yc/install.sh
+      bash install.sh -i /usr/local/yandex-cloud -n
+      ln -sf /usr/local/yandex-cloud/bin/yc /usr/local/bin/yc
+    fi
+
+  yc-template-lt-prepare-yc-cli: &yc-template-lt-prepare-yc-cli |-
+    echo "${YC_LT_AUTHORIZED_KEY_JSON}" > key.json
+    yc config profile create sa-profile
+    yc config set service-account-key key.json
+    yc config set format json
+    yc config set folder-id ${YC_LT_FOLDER_ID}
+
+  yc-template-lt-prepare-automation-scripts: &yc-template-lt-prepare-automation-scripts |-
+    if [[ -z "$YC_LT_AUTOMATION_SCRIPTS_DIR" ]]; then
+      echo "Variable YC_LT_AUTOMATION_SCRIPTS_DIR should be defined"
+      exit 1
+    fi
+
+    function get_script {
+      local -r _name=$1
+      local -r _file="$YC_LT_AUTOMATION_SCRIPTS_DIR/$_name"
+      local -r _url="$YC_LT_AUTOMATION_SCRIPTS_URL/$_name"
+
+      if [[ -f "$_file" ]]; then
+        echo "File $_file was found. Nothing to download"
+        return 0
+      fi
+
+      if [[ -z "$YC_LT_AUTOMATION_SCRIPTS_URL" ]]; then
+        echo "Variable YC_LT_AUTOMATION_SCRIPTS_URL should be defined to download from external source"
+        exit 1
+      fi
+
+      echo "File $_file not found. Downloading from $_url..."
+      curl -L "$_url" --output "$_file"
+      chmod +x "$_file"
+    }
+
+    IFS=$'\n ' read -d '' -ra _scripts <<< "${YC_LT_AUTOMATION_SCRIPTS}" || true
+    for _scr in "${_scripts[@]}"; do
+      get_script "$_scr"
+    done
+
+.yc-template-lt-job-create-compute-agent: &yc-template-lt-job-create-compute-agent
+  interruptible: false
+  variables: *yc-template-lt-default-vars
+  before_script:
+    - *yc-template-lt-install-deps
+    - *yc-template-lt-prepare-yc-cli
+    - *yc-template-lt-prepare-automation-scripts
+  script:
+    - set -e
+    - $YC_LT_AUTOMATION_SCRIPTS_DIR/agent.sh create --count $YC_LT_AGENTS_CNT --labels $YC_LT_AGENT_LABELS
+
+.yc-template-lt-job-delete-compute-agent:
+  &yc-template-lt-job-delete-compute-agent
+  when: always
+  interruptible: false
+  variables: *yc-template-lt-default-vars
+  before_script:
+    - *yc-template-lt-install-deps
+    - *yc-template-lt-prepare-yc-cli
+    - *yc-template-lt-prepare-automation-scripts
+  script:
+    - set -e
+    - $YC_LT_AUTOMATION_SCRIPTS_DIR/agent.sh delete --labels $YC_LT_AGENT_LABELS
+
+.yc-template-lt-job-run-test: &yc-template-lt-job-run-test
+  resource_group: loadtesting
+  interruptible: true
+  variables: *yc-template-lt-default-vars
+  before_script:
+    - *yc-template-lt-install-deps
+    - *yc-template-lt-prepare-yc-cli
+    - *yc-template-lt-prepare-automation-scripts
+  script:
+    - set -e
+    - IFS=$'\n ' read -d '' -ra _tests <<< "${YC_LT_TESTS}" || true
+    - $YC_LT_AUTOMATION_SCRIPTS_DIR/test.sh "${_tests[@]}"
+  artifacts:
+    when: always
+    name: "tests_output"
+    paths:
+      - ${YC_LT_OUTPUT_DIR}
